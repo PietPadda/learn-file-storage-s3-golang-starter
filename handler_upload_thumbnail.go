@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -71,19 +72,13 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return                                                                                           // early return
 	}
 
-	// create the thumbnail struct
-	thumbnail := thumbnail{
-		data:      imageData, // byte slice from io.ReadAll
-		mediaType: mediaType, // type of image from header
-	}
-
-	// add to global map using key-value pair
-	videoThumbnails[videoID] = thumbnail
+	// base64 encode the image data to store as text in db :)
+	base64String := base64.StdEncoding.EncodeToString(imageData)
 
 	// build the thumbnail path
-	thumbnailURL := fmt.Sprintf("http://localhost:%s/api/thumbnails/%s", cfg.port, videoID) // endpoint + video id
+	thumbnailURL := fmt.Sprintf("data:%s;base64,%s", mediaType, base64String) // data URL with type and text encoded image
 
-	// update the video thumbnail url path
+	// update the video thumbnail DATA url path
 	video.ThumbnailURL = &thumbnailURL // note it's a pointer field (write to field)
 	updatedVideo := cfg.db.UpdateVideo(video)
 

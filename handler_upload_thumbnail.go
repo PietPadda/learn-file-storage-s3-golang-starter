@@ -1,10 +1,12 @@
 package main
 
 import (
-	"encoding/base64"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -48,13 +50,25 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	// get the thumbnail media type
 	mediaType := fileHeader.Header.Get("Content-Type") // jpg, png, gif etc from fileHeader
 
-	// read into byte slice (images are binary data)
-	imageData, err := io.ReadAll(file) // read data from the pipe (decoded data)
+	// get MIME extension
+	exts, err := mime.ExtensionsByType(mediaType)
 
-	// pipe read check
+	// mime extension check
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Error reading file", err)
-		return // early return
+		errorMessage := fmt.Sprintf("Error processing extension %s: %v", mediaType, err) // custom msg for 2 vars
+		respondWithError(w, http.StatusInternalServerError, errorMessage, err)           // add to single var msg
+		return                                                                           // early return
+	}
+
+	var fileExt string // init string
+
+	// check if exts valid
+	if len(exts) > 0 {
+		fileExt = exts[0] // get most common ext type (first in slice)
+	} else { // otherwise, it's empty
+		errorMessage := fmt.Sprintf("Unsupported media type or no extension found for %s", mediaType) // custom msg
+		respondWithError(w, http.StatusBadRequest, errorMessage, nil)                                 // no err, but bad req
+		return                                                                                        // early return
 	}
 
 	// get video metadata from db
@@ -72,11 +86,33 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return                                                                                           // early return
 	}
 
-	// base64 encode the image data to store as text in db :)
-	base64String := base64.StdEncoding.EncodeToString(imageData)
+	// build filesystem path for thumbnail
+	filePath := filepath.Join(cfg.assetsRoot, videoID.String()+fileExt) // videoID is uuid, need str
+	// ./assets/videoID.ext as the unique path!
 
-	// build the thumbnail path
-	thumbnailURL := fmt.Sprintf("data:%s;base64,%s", mediaType, base64String) // data URL with type and text encoded image
+	// create empty output file
+	outFile, err := os.Create(filePath)
+
+	// empty file check
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error creating file", err)
+		return // early return
+	}
+
+	// copy imageData contents to this new empty file
+	_, err = io.Copy(outFile, file) // write filedata to outFile
+
+	// io.Copy check
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error copying thumbnail data to file", err)
+		return // early return
+	}
+
+	// close file and outFile os/io reading on func end, prevent mem leak
+	defer outFile.Close()
+
+	// build the thumbnail path (filesystem)
+	thumbnailURL := fmt.Sprintf("http://localhost:%s/assets/%s%s", cfg.port, videoID, fileExt) // path of file on filesystem
 
 	// update the video thumbnail DATA url path
 	video.ThumbnailURL = &thumbnailURL // note it's a pointer field (write to field)

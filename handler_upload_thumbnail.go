@@ -48,10 +48,10 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	defer file.Close() // stop reading when done, prevent mem leak
 
 	// get the thumbnail media type
-	mediaType := fileHeader.Header.Get("Content-Type") // jpg, png, gif etc from fileHeader
+	mediaContentType := fileHeader.Header.Get("Content-Type") // jpg, png, gif etc from fileHeader
 
-	// get MIME extension
-	exts, err := mime.ExtensionsByType(mediaType)
+	// get MIME extension via parsing
+	mediaType, _, err := mime.ParseMediaType(mediaContentType) // pass in header content type, ignore params
 
 	// mime extension check
 	if err != nil {
@@ -60,15 +60,18 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return                                                                           // early return
 	}
 
-	var fileExt string // init string
+	var fileExt string // init string (for scoping)
 
-	// check if exts valid
-	if len(exts) > 0 {
-		fileExt = exts[0] // get most common ext type (first in slice)
-	} else { // otherwise, it's empty
-		errorMessage := fmt.Sprintf("Unsupported media type or no extension found for %s", mediaType) // custom msg
-		respondWithError(w, http.StatusBadRequest, errorMessage, nil)                                 // no err, but bad req
-		return                                                                                        // early return
+	// only allow jpeg and png
+	switch mediaType {
+	case "image/jpeg": // if jpeg
+		fileExt = ".jpg" // set ext accordingly
+	case "image/png": // if png
+		fileExt = ".png" // set ext accordingly
+	default: // if ANYTHING else
+		errorMessage := fmt.Sprintf("Invalid thumbnail type: %s", mediaType) // custom msg
+		respondWithError(w, http.StatusBadRequest, errorMessage, nil)        // nil, not an error
+		return                                                               // early return
 	}
 
 	// get video metadata from db

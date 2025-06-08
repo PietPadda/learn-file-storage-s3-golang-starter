@@ -261,7 +261,7 @@ function viewVideo(video) {
     thumbnailImg.style.display = 'none';
   } else {
     thumbnailImg.style.display = 'block';
-    thumbnailImg.src = `${video.thumbnail_url}?v=${Date.now()}`; // add cache busting query using timestamp
+    thumbnailImg.src = video.thumbnail_url; // remove cache busting query
   }
 
   const videoPlayer = document.getElementById('video-player');

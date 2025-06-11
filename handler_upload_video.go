@@ -125,7 +125,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 	var fileExt string // init string (for scoping)
 
-	// only allow jpeg and png
+	// only allow mp4
 	switch mediaType {
 	case "video/mp4": // if mp4
 		fileExt = ".mp4" // set ext accordingly
@@ -258,7 +258,7 @@ func getVideoAspectRatio(filePath string) (string, error) {
 		return "", err // error is returned upwards ie to handler
 	}
 
-	// create nil slice for data response
+	// create zero slice for data response
 	var ffProbeOutput FFProbeOutput // entire output, incl internal structs
 
 	// get output as []byte] slice for unmarshal

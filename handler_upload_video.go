@@ -1,21 +1,34 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
 )
+
+// Structs
+type FFProbeOutput struct {
+	Streams []FFProbeStream `json:"streams"`
+}
+
+type FFProbeStream struct {
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
 
 func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request) {
 	videoIDString := r.PathValue("videoID") // for extracting videoID from URL path
@@ -163,9 +176,33 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	rand.Read(randomBytes)          // generate here
 	// no err as Read ALWAYS succeed (crypto)
 
+	// get aspect ratio
+	tempFilePath := tempFile.Name()                       // .Name() gets the /tmp/filename.ext file path
+	aspectRatio, err := getVideoAspectRatio(tempFilePath) // pass tmp filepath to helper
+
+	// aspect ratio check
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error getting video aspect ratio", err)
+		return // early return
+	}
+
+	// determine aspect ratio prefix (init before to enter switch scope)
+	var aspectRatioPrefix string
+
+	// check the cases and set the fileKey prefix
+	switch aspectRatio {
+	case "16:9":
+		aspectRatioPrefix = "landscape/"
+	case "9:16":
+		aspectRatioPrefix = "portrait/"
+	default:
+		aspectRatioPrefix = "other/"
+	}
 	// encode to HEX for URL safety (AWS S3 favours this)
 	hexString := hex.EncodeToString(randomBytes)
-	fileKey := hexString + fileExt // this will be the AWS string for filename
+
+	// build the fileKey
+	fileKey := aspectRatioPrefix + hexString + fileExt // this will be the AWS string for filename
 
 	// create S3 put object parameters
 	putParams := &s3.PutObjectInput{
@@ -195,4 +232,61 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 	// respond to client with the updated video struct
 	respondWithJSON(w, http.StatusOK, updatedVideo)
+}
+
+// HELPER FUNCTIONS
+func getVideoAspectRatio(filePath string) (string, error) {
+	// execute ffprobe command
+	cmd := exec.Command(
+		"ffprobe",
+		"-v", "error",
+		"-print_format", "json",
+		"-show_streams",
+		filePath,
+	)
+
+	// direct output to bytes.Buffer
+	var out bytes.Buffer // hold cmd output
+	cmd.Stdout = &out    // store cmd output to this in-memory byte slice
+
+	// run the cmd
+	err := cmd.Run() // out.Bytes() contains the stdout of ffprobe
+	// this "runs" the cmd, with output in the buffer, ready for parsing etc
+
+	// run check
+	if err != nil {
+		return "", err // error is returned upwards ie to handler
+	}
+
+	// create nil slice for data response
+	var ffProbeOutput FFProbeOutput // entire output, incl internal structs
+
+	// get output as []byte] slice for unmarshal
+	outBytes := out.Bytes()
+
+	// unmarshal to conv from raw json to go readable code
+	err = json.Unmarshal(outBytes, &ffProbeOutput)
+
+	// unmarshal check
+	if err != nil {
+		return "", fmt.Errorf("error unmarshalling json data: %w", err) // nil slice & error
+	}
+
+	// get video aspect ratio (assume it's first stream)
+	videoWidth := ffProbeOutput.Streams[0].Width
+	videoHeight := ffProbeOutput.Streams[0].Height
+
+	// calculate ratio using float64 (optimal for 64bit, and Go std)
+	aspectRatio := float64(videoWidth) / float64(videoHeight)
+
+	// check if 16:9 (~1.78)
+	if aspectRatio > 1.7 && aspectRatio < 1.85 {
+		return "16:9", nil
+		// check if 9:16 (~0.56)
+	} else if aspectRatio > 0.52 && aspectRatio < 0.6 {
+		return "9:16", nil
+		// otherwise other
+	} else {
+		return "other", nil
+	}
 }

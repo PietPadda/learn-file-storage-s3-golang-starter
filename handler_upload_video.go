@@ -176,9 +176,31 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	rand.Read(randomBytes)          // generate here
 	// no err as Read ALWAYS succeed (crypto)
 
-	// get aspect ratio
-	tempFilePath := tempFile.Name()                       // .Name() gets the /tmp/filename.ext file path
-	aspectRatio, err := getVideoAspectRatio(tempFilePath) // pass tmp filepath to helper
+	// get temp file path (process video before getting aspect ratio)
+	tempFilePath := tempFile.Name() // .Name() gets the /tmp/filename.ext file path
+
+	// process video for fast start
+	processedFilePath, err := processVideoForFastStart(tempFilePath)
+
+	// process check
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error processing video for fast start", err)
+		return // early return
+	}
+	defer os.Remove(processedFilePath) // clean up after to prevent mem leak
+
+	// open the processed file (for S3 upload & AR get)
+	processedFile, err := os.Open(processedFilePath)
+
+	// open processed file check
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error opening processed file", err)
+		return // early return
+	}
+	defer processedFile.Close() // prevent mem leak
+
+	// get aspect ratio (from processed file)
+	aspectRatio, err := getVideoAspectRatio(processedFilePath) // pass tmp filepath to helper
 
 	// aspect ratio check
 	if err != nil {
@@ -208,7 +230,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	putParams := &s3.PutObjectInput{
 		Bucket:      aws.String(cfg.s3Bucket),     // bucket from .env
 		Key:         aws.String(fileKey),          // oue new filename
-		Body:        tempFile,                     // io.Reader
+		Body:        processedFile,                // io.Reader
 		ContentType: aws.String(mediaContentType), // extension
 	}
 	// aws.String() cnvrts string to *string - AWS needs pointers to omit fields by passing nil
@@ -289,4 +311,39 @@ func getVideoAspectRatio(filePath string) (string, error) {
 	} else {
 		return "other", nil
 	}
+}
+
+func processVideoForFastStart(filePath string) (string, error) {
+	// output file path
+	outFilePath := filePath + ".processing"
+
+	// execute ffmpeg command
+	cmd := exec.Command(
+		"ffmpeg",       // run ffmpeg app
+		"-i", filePath, // input file path
+		"-c", "copy", // copy no encode
+		"-movflags", "faststart", // move moov atom to start
+		"-f", "mp4", // output format mp4
+		outFilePath, // processed output filepath
+	)
+
+	// direct output to bytes.Buffer
+	var out bytes.Buffer // hold cmd output
+	cmd.Stdout = &out    // store cmd output to this in-memory byte slice
+
+	// capture ffmpeg error
+	var stderr bytes.Buffer // hold cmd error
+	cmd.Stderr = &stderr    // store cmd error to this in-memory byte slice
+
+	// run the cmd
+	err := cmd.Run() // out.Bytes() contains the stdout of ffmpeg
+	// this "runs" the cmd, with output in the buffer, ready for parsing etc
+
+	// run check
+	if err != nil {
+		return "", fmt.Errorf("ffmpeg error: %v, details: %s", err, stderr.String()) // error is returned upwards ie to handler
+	}
+
+	// output the processed filepath
+	return outFilePath, nil
 }

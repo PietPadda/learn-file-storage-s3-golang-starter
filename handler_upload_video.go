@@ -245,15 +245,31 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	// build the VideoURL (Amazon S3)
-	videoURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, fileKey) // path of file on S3
+	videoURL := fmt.Sprintf("%s,%s", cfg.s3Bucket, fileKey) // comma-delimited string
+	// store bucket + fileKey as hacky way to gen presigned URLs
 
 	// update the video thumbnail DATA url path
-	video.VideoURL = &videoURL                // note it's a pointer field (write to field)
-	updatedVideo := cfg.db.UpdateVideo(video) // update our DB VideoURL with S3 path
-	// NOTE: UpdateVideo doesn't return err
+	video.VideoURL = &videoURL      // note it's a pointer field (write to field)
+	err = cfg.db.UpdateVideo(video) // update our DB VideoURL with S3 path
+	// NOTE: UpdateVideo ONLY returns err
+
+	// update video in DB check
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error updating video in DB", err)
+		return // early return)
+	}
+
+	// intercept the videoURL to update with AWS-signed URL to give temp access to private bucket
+	signedVideo, err := cfg.dbVideoToSignedVideo(video)
+
+	// presign the video URL check
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error generating presigned URL", err)
+		return // early return)
+	}
 
 	// respond to client with the updated video struct
-	respondWithJSON(w, http.StatusOK, updatedVideo)
+	respondWithJSON(w, http.StatusOK, signedVideo)
 }
 
 // HELPER FUNCTIONS

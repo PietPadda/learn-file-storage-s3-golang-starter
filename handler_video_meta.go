@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -95,7 +96,17 @@ func (cfg *apiConfig) handlerVideoGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, video)
+	// gen presigned URL for the video
+	signedVideo, err := cfg.dbVideoToSignedVideo(video)
+
+	// signed video check
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't generate presigned URL", err)
+		return // early return
+	}
+
+	// return the intercepted video with signed url
+	respondWithJSON(w, http.StatusOK, signedVideo)
 }
 
 func (cfg *apiConfig) handlerVideosRetrieve(w http.ResponseWriter, r *http.Request) {
@@ -116,5 +127,26 @@ func (cfg *apiConfig) handlerVideosRetrieve(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, videos)
+	// need to make a slice to presign each video (can't do videos)
+	signedVideos := make([]database.Video, 0, len(videos)) // start with 0 elements (no need to assign indexing)
+	// preallocate capacity based on number of videos
+
+	// loop thru videos and presign each's url
+	for _, video := range videos {
+		signedVideo, err := cfg.dbVideoToSignedVideo(video)
+
+		// signed video check
+		if err != nil {
+			// log the error in server
+			fmt.Println("Skipping video due to invalid videoUrl:", err)
+			// skip this video, continue to next
+			continue // early return
+		}
+
+		// add signed videos to empty slice
+		signedVideos = append(signedVideos, signedVideo)
+	}
+
+	// return the intercepted videoS with signed url
+	respondWithJSON(w, http.StatusOK, signedVideos)
 }

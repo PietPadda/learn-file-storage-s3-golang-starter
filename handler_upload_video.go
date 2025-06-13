@@ -245,8 +245,8 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	// build the VideoURL (Amazon S3)
-	videoURL := fmt.Sprintf("%s,%s", cfg.s3Bucket, fileKey) // comma-delimited string
-	// store bucket + fileKey as hacky way to gen presigned URLs
+	videoURL := fmt.Sprintf("%s/%s", cfg.s3CfDistribution, fileKey) // standard /
+	// store distribution domain + fileKey to use CloudFront
 
 	// update the video thumbnail DATA url path
 	video.VideoURL = &videoURL      // note it's a pointer field (write to field)
@@ -259,17 +259,8 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return // early return)
 	}
 
-	// intercept the videoURL to update with AWS-signed URL to give temp access to private bucket
-	signedVideo, err := cfg.dbVideoToSignedVideo(video)
-
-	// presign the video URL check
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Error generating presigned URL", err)
-		return // early return)
-	}
-
 	// respond to client with the updated video struct
-	respondWithJSON(w, http.StatusOK, signedVideo)
+	respondWithJSON(w, http.StatusOK, video)
 }
 
 // HELPER FUNCTIONS
